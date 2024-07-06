@@ -1,13 +1,18 @@
 import { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { knex } from '../database'
+import { randomUUID } from 'crypto'
+
+// Cookies <--> Formas da gente manter contexto entre requisições
 
 export async function transactionsRoute(app: FastifyInstance) {
   app.get('/', async () => {
     const transactions = await knex('tb_transactions').select('*')
-    const totalTransactions = await knex('tb_transactions').count('*')
+    const totalTransactions = await knex('tb_transactions').count('*', {
+      as: 'total',
+    }).first
 
-    return { total: totalTransactions[0], transactions }
+    return { total: totalTransactions, transactions }
   })
 
   app.get('/:id', async (request) => {
@@ -22,6 +27,14 @@ export async function transactionsRoute(app: FastifyInstance) {
     return { transaction }
   })
 
+  app.get('/summary', async () => {
+    const summary = await knex('tb_transactions').sum('amount', {
+      as: 'amount',
+    })
+
+    return { summary }
+  })
+
   app.post('/', async (request, reply) => {
     const createTransactionBodySchema = z.object({
       title: z.string(),
@@ -33,10 +46,22 @@ export async function transactionsRoute(app: FastifyInstance) {
       request.body,
     )
 
+    let sessionId = request.cookies.sessionId
+
+    if (!sessionId) {
+      sessionId = randomUUID()
+
+      reply.cookie('sessionId', sessionId, {
+        path: '/',
+        maxAge: 60 * 60 * 24 * 7, // 7 Days
+      })
+    }
+
     await knex('tb_transactions').insert({
       id: crypto.randomUUID(),
       title,
       amount: type === 'credit' ? amount : amount * -1,
+      session_id: sessionId,
     })
 
     return reply.status(201).send()
